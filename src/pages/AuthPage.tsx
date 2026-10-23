@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { Shield, Eye, EyeOff } from 'lucide-react'
 import type { Language, UserRole } from '../types'
+import { APP_VERSION } from '../version'
 
 export default function AuthPage() {
   const { t, signIn, signUp } = useAuth()
@@ -49,7 +50,12 @@ export default function AuthPage() {
               <Shield className="w-7 h-7 text-white" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold">{t('appName')}</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-bold">{t('appName')}</h1>
+                <span className="px-2 py-0.5 rounded-full bg-primary-500/20 text-primary-300 text-xs font-mono font-semibold border border-primary-500/30">
+                  v{APP_VERSION}
+                </span>
+              </div>
               <p className="text-neutral-400">{t('appSubtitle')}</p>
             </div>
           </div>
@@ -85,7 +91,12 @@ export default function AuthPage() {
               <Shield className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-neutral-900">{t('appName')}</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl font-bold text-neutral-900">{t('appName')}</h1>
+                <span className="px-2 py-0.5 rounded-full bg-neutral-200 text-neutral-700 text-xs font-mono font-semibold">
+                  v{APP_VERSION}
+                </span>
+              </div>
               <p className="text-neutral-500 text-sm">{t('appSubtitle')}</p>
             </div>
           </div>

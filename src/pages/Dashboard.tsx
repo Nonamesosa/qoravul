@@ -12,6 +12,7 @@ import {
 import { formatNumber, formatPercent, formatCurrency, getDecisionBadgeClass, formatTimeAgo } from '../lib/utils'
 import type { Decision, FraudEvent } from '../types'
 import { Link } from 'react-router-dom'
+import { APP_VERSION } from '../version'
 
 interface Stats {
   totalEvents: number
@@ -209,7 +210,12 @@ export default function Dashboard() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-neutral-900">{t('dashboard')}</h1>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-2xl font-bold text-neutral-900">{t('dashboard')}</h1>
+            <span className="px-2 py-0.5 rounded-full bg-primary-50 text-primary-700 text-xs font-mono font-semibold border border-primary-200">
+              v{APP_VERSION}
+            </span>
+          </div>
           <p className="text-neutral-500 text-sm mt-0.5">
             {range === 7 ? t('last7Days') : t('last30Days')} · {user?.full_name}
           </p>

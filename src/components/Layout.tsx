@@ -17,6 +17,7 @@ import {
 import { useState, useRef, useEffect } from 'react'
 import clsx from 'clsx'
 import type { Language, UserRole } from '../types'
+import { APP_VERSION } from '../version'
 
 const navItems: { path: string; key: 'dashboard' | 'cases' | 'rules' | 'models' | 'admin_panel' | 'auditLog' | 'notifications' | 'simulator'; icon: typeof Shield; roles?: UserRole[] }[] = [
   { path: '/dashboard', key: 'dashboard', icon: LayoutDashboard },
@@ -62,7 +63,12 @@ export default function Layout() {
               <Shield className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="text-white font-bold text-lg leading-tight">{t('appName')}</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-white font-bold text-lg leading-tight">{t('appName')}</h1>
+                <span className="font-mono text-primary-300 font-semibold bg-primary-950/80 px-1.5 py-0.5 rounded text-[10px] border border-primary-700/50">
+                  v{APP_VERSION}
+                </span>
+              </div>
               <p className="text-neutral-500 text-xs">{t('appSubtitle')}</p>
             </div>
           </div>
@@ -108,6 +114,10 @@ export default function Layout() {
             <LogOut className="w-5 h-5" />
             <span>{t('logout')}</span>
           </button>
+          <div className="mt-2.5 px-3 pt-2.5 border-t border-neutral-800/80 flex items-center justify-between text-[11px] text-neutral-500">
+            <span>Qorovul MVP</span>
+            <span className="font-mono text-neutral-400 font-medium">v{APP_VERSION}</span>
+          </div>
         </div>
       </aside>
 
