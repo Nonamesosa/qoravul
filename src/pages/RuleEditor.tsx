@@ -65,6 +65,19 @@ export default function RuleEditor() {
     if (!id) return
     const { data } = await supabase.from('rules').select('*').eq('id', id).maybeSingle()
     if (data) {
+      // FR-13 4-eyes sanitization: creator cannot be approver
+      if (data.created_by && data.approved_by && data.created_by === data.approved_by) {
+        supabase.from('rules').update({
+          approved_by: null,
+          approved_at: null,
+          status: 'draft',
+          updated_at: new Date().toISOString(),
+        }).eq('id', id).then(() => {})
+        data.approved_by = null
+        data.approved_at = null
+        data.status = 'draft'
+      }
+
       setRule(data as any)
       setName(data.name)
       setAction(data.action)
@@ -260,6 +273,7 @@ export default function RuleEditor() {
 
   // 4-eyes: check if current logged-in user is the creator of this rule
   const isOwnRule = Boolean(rule && user && rule.created_by && rule.created_by === user.id)
+  const isActuallyApproved = Boolean(rule && rule.approved_by && rule.created_by !== rule.approved_by)
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -282,8 +296,8 @@ export default function RuleEditor() {
             <div className={`badge ${getRuleStatusBadgeClass(rule.status)}`}>
               {rule.status === 'active' ? t('active') : rule.status === 'shadow' ? t('shadow') : rule.status === 'draft' ? t('draft') : t('disabled')}
             </div>
-            <div className={clsx('badge', rule.approved_by ? 'badge-active' : 'badge-draft')}>
-              {rule.approved_by ? `✓ ${t('approved')}` : `✕ ${t('notApproved')}`}
+            <div className={clsx('badge', isActuallyApproved ? 'badge-active' : 'badge-draft')}>
+              {isActuallyApproved ? `✓ ${t('approved')}` : `✕ ${t('notApproved')}`}
             </div>
             <span className="text-xs text-neutral-400">v{rule.version}</span>
           </div>
@@ -311,13 +325,13 @@ export default function RuleEditor() {
               </div>
               <p className="text-xs text-neutral-500 mt-1">
                 Yaratilgan: {formatDate(rule.created_at, lang)}
-                {rule.approved_at && ` · Tasdiqlangan: ${formatDate(rule.approved_at, lang)}`}
+                {isActuallyApproved && rule.approved_at && ` · Tasdiqlangan: ${formatDate(rule.approved_at, lang)}`}
               </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
               {/* Approve button for unapproved rules (strict 4-eyes: disabled if isOwnRule) */}
-              {!rule.approved_by && (
+              {!isActuallyApproved && (
                 <button
                   onClick={approveRule}
                   disabled={actionLoading || isOwnRule}
@@ -332,8 +346,8 @@ export default function RuleEditor() {
                 </button>
               )}
 
-              {/* Status transition buttons once approved */}
-              {rule.approved_by && (
+              {/* Status transition buttons once approved by a second person */}
+              {isActuallyApproved && (
                 <>
                   {rule.status !== 'active' && (
                     <button

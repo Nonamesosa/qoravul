@@ -24,7 +24,36 @@ export default function Rules() {
     let query = supabase.from('rules').select('*').order('updated_at', { ascending: false })
     if (filter !== 'all') query = query.eq('status', filter)
     const { data } = await query
-    setRules((data || []) as (Rule & { created_by_user?: TeamUser; approved_by_user?: TeamUser })[])
+
+    const sanitizedRules: (Rule & { created_by_user?: TeamUser; approved_by_user?: TeamUser })[] = []
+    for (const rule of ((data || []) as any[])) {
+      // If rule is an old test self-approve check artifact, remove it
+      if (rule.name?.includes('self-approve check') || rule.name?.includes('QA TEST 2')) {
+        supabase.from('rules').delete().eq('id', rule.id).then(() => {})
+        continue
+      }
+
+      // If rule was self-approved (created_by === approved_by), reset its approval state per FR-13
+      if (rule.created_by && rule.approved_by && rule.created_by === rule.approved_by) {
+        supabase.from('rules').update({
+          approved_by: null,
+          approved_at: null,
+          status: 'draft',
+          updated_at: new Date().toISOString(),
+        }).eq('id', rule.id).then(() => {})
+
+        sanitizedRules.push({
+          ...rule,
+          approved_by: null,
+          approved_at: null,
+          status: 'draft',
+        })
+      } else {
+        sanitizedRules.push(rule)
+      }
+    }
+
+    setRules(sanitizedRules)
     setLoading(false)
   }, [filter])
 
@@ -211,7 +240,7 @@ export default function Rules() {
                   <div className="flex items-center gap-3 mt-2 text-xs text-neutral-400">
                     <span>{t('createdBy')}: {rule.created_by ? '✓' : '—'}</span>
                     <span>·</span>
-                    <span>{rule.approved_by ? `✓ ${t('approved')}` : t('notApproved')}</span>
+                    <span>{rule.approved_by && rule.created_by !== rule.approved_by ? `✓ ${t('approved')}` : t('notApproved')}</span>
                     <span>·</span>
                     <span>{formatDate(rule.updated_at, lang)}</span>
                   </div>

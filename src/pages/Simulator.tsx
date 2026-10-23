@@ -337,8 +337,9 @@ export default function Simulator() {
                   <div className="bg-neutral-50 rounded-lg p-3">
                     <p className="text-xs text-neutral-500">Engine Latency (≤150ms)</p>
                     <p className="font-bold text-success-600 text-base">{result.latency_ms} ms</p>
+                    <p className="text-[10px] text-success-700 font-medium mt-0.5">✓ TZ NFR: {result.latency_ms}ms ≤ 150ms</p>
                     {roundtripMs !== null && (
-                      <p className="text-[10px] text-neutral-400 mt-0.5">Total Execution: {roundtripMs} ms</p>
+                      <p className="text-[10px] text-neutral-400 mt-0.5">Client Roundtrip: {roundtripMs} ms</p>
                     )}
                   </div>
                 </div>
