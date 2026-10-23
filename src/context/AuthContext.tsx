@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
+import { logAudit } from '../lib/audit'
 import type { TeamUser, Language } from '../types'
 import { translate, type TranslationKey } from '../i18n/translations'
 
@@ -109,24 +110,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     email: string,
     password: string,
     fullName: string,
-    role: string,
+    _requestedRole: string,
     language: Language
   ) => {
     const { data, error } = await supabase.auth.signUp({ email, password })
     if (error) return { error: error.message }
     if (data.user) {
+      // Default to least privilege 'analyst' for public signups (13.1, FR-50)
+      const assignedRole = 'analyst'
       const { error: profileError } = await supabase
         .from('team_users')
         .insert({
           id: data.user.id,
           email,
           full_name: fullName,
-          role,
+          role: assignedRole,
           language,
         })
       if (profileError) {
         return { error: profileError.message }
       }
+      await logAudit('user.signup', 'team_users', data.user.id, {
+        email,
+        full_name: fullName,
+        role: assignedRole,
+      })
       await fetchUser(data.user.id)
     }
     return { error: null }

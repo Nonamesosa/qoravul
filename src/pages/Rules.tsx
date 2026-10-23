@@ -2,7 +2,8 @@ import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import { Plus, CheckCircle, Eye, EyeOff, Trash2, Filter, ArrowRight } from 'lucide-react'
+import { Plus, CheckCircle, Eye, EyeOff, Trash2, Filter, ArrowRight, ShieldCheck } from 'lucide-react'
+import { logAudit } from '../lib/audit'
 import { getRuleStatusBadgeClass, formatDate } from '../lib/utils'
 import type { Rule, TeamUser } from '../types'
 import clsx from 'clsx'
@@ -28,30 +29,72 @@ export default function Rules() {
   useEffect(() => { fetchRules() }, [fetchRules])
 
   const approve = async (rule: Rule) => {
-    if (!user || rule.created_by === user.id) return
+    if (!user || !canManage) return
+    if (rule.created_by && rule.created_by === user.id && user.role !== 'admin') {
+      alert(t('cannotApproveOwn'))
+      return
+    }
     const { error } = await supabase
       .from('rules')
-      .update({ approved_by: user.id, approved_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .update({
+        approved_by: user.id,
+        approved_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', rule.id)
-    if (!error) fetchRules()
+    if (!error) {
+      await logAudit('rule.approve', 'rule', rule.id, { approved_by: user.id, rule_name: rule.name })
+      fetchRules()
+    }
+  }
+
+  const approveAllUnapproved = async () => {
+    if (!user || !canManage) return
+    const unapproved = rules.filter(r => !r.approved_by && (r.created_by !== user.id || user.role === 'admin'))
+    if (unapproved.length === 0) return
+
+    for (const r of unapproved) {
+      await supabase
+        .from('rules')
+        .update({
+          approved_by: user.id,
+          approved_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', r.id)
+      await logAudit('rule.approve', 'rule', r.id, { approved_by: user.id, rule_name: r.name })
+    }
+    fetchRules()
   }
 
   const activate = async (rule: Rule) => {
-    if (!rule.approved_by) return
+    if (!rule.approved_by) {
+      alert(t('needsApproval'))
+      return
+    }
     const { error } = await supabase
       .from('rules')
       .update({ status: 'active', updated_at: new Date().toISOString() })
       .eq('id', rule.id)
-    if (!error) fetchRules()
+    if (!error) {
+      await logAudit('rule.status_change', 'rule', rule.id, { from: rule.status, to: 'active', rule_name: rule.name })
+      fetchRules()
+    }
   }
 
   const moveToShadow = async (rule: Rule) => {
-    if (!rule.approved_by) return
+    if (!rule.approved_by) {
+      alert(t('needsApproval'))
+      return
+    }
     const { error } = await supabase
       .from('rules')
       .update({ status: 'shadow', updated_at: new Date().toISOString() })
       .eq('id', rule.id)
-    if (!error) fetchRules()
+    if (!error) {
+      await logAudit('rule.status_change', 'rule', rule.id, { from: rule.status, to: 'shadow', rule_name: rule.name })
+      fetchRules()
+    }
   }
 
   const disable = async (rule: Rule) => {
@@ -59,13 +102,19 @@ export default function Rules() {
       .from('rules')
       .update({ status: 'disabled', updated_at: new Date().toISOString() })
       .eq('id', rule.id)
-    if (!error) fetchRules()
+    if (!error) {
+      await logAudit('rule.status_change', 'rule', rule.id, { from: rule.status, to: 'disabled', rule_name: rule.name })
+      fetchRules()
+    }
   }
 
   const remove = async (rule: Rule) => {
     if (!confirm(t('confirmDelete'))) return
     const { error } = await supabase.from('rules').delete().eq('id', rule.id)
-    if (!error) fetchRules()
+    if (!error) {
+      await logAudit('rule.delete', 'rule', rule.id, { rule_name: rule.name })
+      fetchRules()
+    }
   }
 
   const filters: { key: FilterStatus; label: string }[] = [
@@ -84,10 +133,22 @@ export default function Rules() {
           <p className="text-neutral-500 text-sm mt-0.5">{t('rulesList')}</p>
         </div>
         {canManage && (
-          <Link to="/rules/new" className="btn-primary">
-            <Plus className="w-4 h-4" />
-            {t('createRule')}
-          </Link>
+          <div className="flex items-center gap-2">
+            {rules.some(r => !r.approved_by) && (
+              <button
+                onClick={approveAllUnapproved}
+                className="btn-secondary text-success-700 hover:bg-success-50 border-success-200"
+                title="Barcha tasdiqlanmagan qoidalarni 4-eyes tamoyili asosida tasdiqlash"
+              >
+                <ShieldCheck className="w-4 h-4 text-success-600" />
+                4-Eyes Tasdiqlash
+              </button>
+            )}
+            <Link to="/rules/new" className="btn-primary">
+              <Plus className="w-4 h-4" />
+              {t('createRule')}
+            </Link>
+          </div>
         )}
       </div>
 
@@ -143,8 +204,17 @@ export default function Rules() {
                 {/* Actions */}
                 {canManage && (
                   <div className="flex items-center gap-1.5">
-                    {!rule.approved_by && rule.created_by !== user?.id && rule.status === 'draft' && (
-                      <button onClick={() => approve(rule)} className="btn-sm btn-success" title={t('approve')}>
+                    {/* Approve button for any unapproved rule */}
+                    {!rule.approved_by && (
+                      <button
+                        onClick={() => approve(rule)}
+                        disabled={rule.created_by === user?.id && user?.role !== 'admin'}
+                        className={clsx(
+                          'btn-sm btn-success',
+                          rule.created_by === user?.id && user?.role !== 'admin' && 'opacity-50 cursor-not-allowed'
+                        )}
+                        title={rule.created_by === user?.id && user?.role !== 'admin' ? t('cannotApproveOwn') : t('approve')}
+                      >
                         <CheckCircle className="w-3.5 h-3.5" />
                         {t('approve')}
                       </button>

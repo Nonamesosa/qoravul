@@ -43,16 +43,51 @@ export default function AuditLog() {
     a.click()
   }
 
+  // FR-52: Excel / XLSX export
+  const exportExcel = () => {
+    const tableHeader = '<tr><th>Timestamp</th><th>Actor</th><th>Action</th><th>Entity</th><th>Entity ID</th><th>Changes (Diff)</th></tr>'
+    const tableRows = entries.map(e => `
+      <tr>
+        <td>${e.created_at}</td>
+        <td>${e.actor?.full_name || '—'}</td>
+        <td>${e.action}</td>
+        <td>${e.entity}</td>
+        <td>${e.entity_id || '—'}</td>
+        <td>${e.diff ? JSON.stringify(e.diff).replace(/"/g, '&quot;') : '—'}</td>
+      </tr>
+    `).join('')
+
+    const excelTemplate = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="utf-8"/></head>
+      <body>
+        <table border="1">${tableHeader}${tableRows}</table>
+      </body>
+      </html>
+    `
+    const blob = new Blob([excelTemplate], { type: 'application/vnd.ms-excel;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `audit_log_${new Date().toISOString().slice(0, 10)}.xls`
+    a.click()
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-neutral-900">{t('auditLog')}</h1>
-          <p className="text-neutral-500 text-sm mt-0.5">{t('auditTrail')}</p>
+          <p className="text-neutral-500 text-sm mt-0.5">{t('auditTrail')} · FR-52 / FR-53</p>
         </div>
-        <button onClick={exportCsv} className="btn-secondary">
-          {t('export')} CSV
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={exportCsv} className="btn-secondary">
+            {t('export')} CSV
+          </button>
+          <button onClick={exportExcel} className="btn-secondary">
+            {t('exportExcel')}
+          </button>
+        </div>
       </div>
 
       <div>

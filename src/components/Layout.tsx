@@ -23,7 +23,7 @@ const navItems: { path: string; key: 'dashboard' | 'cases' | 'rules' | 'models' 
   { path: '/cases', key: 'cases', icon: FolderOpen },
   { path: '/rules', key: 'rules', icon: Gavel, roles: ['admin', 'fraud_manager', 'analyst', 'auditor'] },
   { path: '/models', key: 'models', icon: Brain, roles: ['admin', 'data_scientist', 'fraud_manager'] },
-  { path: '/simulator', key: 'simulator' as any, icon: PlayCircle },
+  { path: '/simulator', key: 'simulator' as any, icon: PlayCircle, roles: ['admin', 'fraud_manager', 'analyst', 'data_scientist'] },
   { path: '/admin', key: 'admin_panel', icon: Settings, roles: ['admin'] },
   { path: '/audit', key: 'auditLog', icon: ScrollText, roles: ['admin', 'auditor', 'fraud_manager'] },
   { path: '/notifications', key: 'notifications', icon: Bell, roles: ['admin', 'fraud_manager', 'analyst'] },

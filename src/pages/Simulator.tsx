@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import { PlayCircle, Send, Loader2 } from 'lucide-react'
+import { PlayCircle, Send, Loader2, AlertTriangle, ShieldAlert } from 'lucide-react'
 import type { ScoringResponse } from '../types'
 import { getDecisionBadgeClass, getRiskScoreColor } from '../lib/utils'
 import clsx from 'clsx'
@@ -9,9 +9,12 @@ import clsx from 'clsx'
 const API_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/risk-evaluate`
 
 export default function Simulator() {
-  const { t } = useAuth()
+  const { t, user } = useAuth()
+  const isAuditor = user?.role === 'auditor'
+
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<ScoringResponse | null>(null)
+  const [roundtripMs, setRoundtripMs] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const [form, setForm] = useState({
@@ -39,9 +42,11 @@ export default function Simulator() {
   }
 
   const simulate = async () => {
+    if (isAuditor) return
     setLoading(true)
     setError(null)
     setResult(null)
+    setRoundtripMs(null)
 
     const requestId = crypto.randomUUID()
     const body = {
@@ -78,6 +83,8 @@ export default function Simulator() {
       },
     }
 
+    const netStart = performance.now()
+
     try {
       const res = await fetch(API_URL, {
         method: 'POST',
@@ -87,6 +94,9 @@ export default function Simulator() {
         },
         body: JSON.stringify(body),
       })
+
+      const totalMs = Math.round(performance.now() - netStart)
+      setRoundtripMs(totalMs)
 
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}))
@@ -109,6 +119,16 @@ export default function Simulator() {
         <p className="text-neutral-500 text-sm mt-0.5">Test scoring API with custom transaction data</p>
       </div>
 
+      {/* BUG-08: Auditor read-only notice */}
+      {isAuditor && (
+        <div className="card p-4 bg-amber-50 border border-amber-200 text-amber-900 flex items-center gap-3">
+          <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />
+          <div className="text-xs">
+            <span className="font-bold">Auditor rejimi:</span> {t('auditorReadOnly')}. Tranzaksiya simulyatsiyasi va qarorlar generatsiyasi operatsion amallar hisoblangani uchun auditorlar uchun bloklangan.
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Form */}
         <div className="card p-6 space-y-4">
@@ -117,7 +137,7 @@ export default function Simulator() {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="label">Event Type</label>
-              <select value={form.event_type} onChange={e => setField('event_type', e.target.value)} className="input">
+              <select value={form.event_type} onChange={e => setField('event_type', e.target.value)} className="input" disabled={isAuditor}>
                 <option value="transfer">Transfer</option>
                 <option value="login">Login</option>
                 <option value="loan_application">Loan Application</option>
@@ -126,11 +146,11 @@ export default function Simulator() {
             </div>
             <div>
               <label className="label">Amount (UZS)</label>
-              <input value={form.amount} onChange={e => setField('amount', e.target.value)} className="input" />
+              <input value={form.amount} onChange={e => setField('amount', e.target.value)} className="input" disabled={isAuditor} />
             </div>
             <div>
               <label className="label">Channel</label>
-              <select value={form.channel} onChange={e => setField('channel', e.target.value)} className="input">
+              <select value={form.channel} onChange={e => setField('channel', e.target.value)} className="input" disabled={isAuditor}>
                 <option value="mobile_app">Mobile App</option>
                 <option value="web">Web</option>
                 <option value="atm">ATM</option>
@@ -139,37 +159,37 @@ export default function Simulator() {
             </div>
             <div>
               <label className="label">Account Age (days)</label>
-              <input value={form.account_age_days} onChange={e => setField('account_age_days', e.target.value)} className="input" />
+              <input value={form.account_age_days} onChange={e => setField('account_age_days', e.target.value)} className="input" disabled={isAuditor} />
             </div>
             <div>
               <label className="label">New Device</label>
-              <select value={form.is_new_device} onChange={e => setField('is_new_device', e.target.value)} className="input">
+              <select value={form.is_new_device} onChange={e => setField('is_new_device', e.target.value)} className="input" disabled={isAuditor}>
                 <option value="true">Yes</option>
                 <option value="false">No</option>
               </select>
             </div>
             <div>
               <label className="label">Rooted</label>
-              <select value={form.is_rooted} onChange={e => setField('is_rooted', e.target.value)} className="input">
+              <select value={form.is_rooted} onChange={e => setField('is_rooted', e.target.value)} className="input" disabled={isAuditor}>
                 <option value="false">No</option>
                 <option value="true">Yes</option>
               </select>
             </div>
             <div>
               <label className="label">Geo Country</label>
-              <input value={form.geo_country} onChange={e => setField('geo_country', e.target.value)} className="input" />
+              <input value={form.geo_country} onChange={e => setField('geo_country', e.target.value)} className="input" disabled={isAuditor} />
             </div>
             <div>
               <label className="label">Geo City</label>
-              <input value={form.geo_city} onChange={e => setField('geo_city', e.target.value)} className="input" />
+              <input value={form.geo_city} onChange={e => setField('geo_city', e.target.value)} className="input" disabled={isAuditor} />
             </div>
             <div>
               <label className="label">Failed Logins (1h)</label>
-              <input value={form.failed_logins_last_hour} onChange={e => setField('failed_logins_last_hour', e.target.value)} className="input" />
+              <input value={form.failed_logins_last_hour} onChange={e => setField('failed_logins_last_hour', e.target.value)} className="input" disabled={isAuditor} />
             </div>
             <div>
               <label className="label">OS</label>
-              <select value={form.os} onChange={e => setField('os', e.target.value)} className="input">
+              <select value={form.os} onChange={e => setField('os', e.target.value)} className="input" disabled={isAuditor}>
                 <option value="android">Android</option>
                 <option value="ios">iOS</option>
                 <option value="web">Web</option>
@@ -177,7 +197,7 @@ export default function Simulator() {
             </div>
           </div>
 
-          <button onClick={simulate} disabled={loading} className="btn-primary w-full">
+          <button onClick={simulate} disabled={loading || isAuditor} className="btn-primary w-full">
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             {loading ? 'Evaluating...' : 'Evaluate Risk'}
           </button>
@@ -217,25 +237,36 @@ export default function Simulator() {
                   Score: {result.risk_score}
                 </div>
                 {result.degraded && (
-                  <span className="badge bg-warning-100 text-warning-600">DEGRADED</span>
+                  <span className="badge bg-warning-100 text-warning-700 font-bold">DEGRADED</span>
                 )}
               </div>
 
+              {result.degraded && (
+                <div className="bg-warning-50 border border-warning-200 rounded-lg p-2.5 text-xs text-warning-800 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-warning-600" />
+                  <span>Faol Champion model yo'q — tizim zaxira qoidalar rejimida (Degraded) baholamoqda.</span>
+                </div>
+              )}
+
+              {/* Latency breakdown (BUG-06) */}
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div className="bg-neutral-50 rounded-lg p-3">
-                  <p className="text-xs text-neutral-500">Model</p>
+                  <p className="text-xs text-neutral-500">Model Version</p>
                   <p className="font-medium text-neutral-900 font-mono">{result.model_version}</p>
                 </div>
                 <div className="bg-neutral-50 rounded-lg p-3">
-                  <p className="text-xs text-neutral-500">Latency</p>
-                  <p className="font-medium text-neutral-900">{result.latency_ms}ms</p>
+                  <p className="text-xs text-neutral-500">Engine Latency (≤150ms)</p>
+                  <p className="font-medium text-neutral-900">{result.latency_ms} ms</p>
+                  {roundtripMs !== null && (
+                    <p className="text-[10px] text-neutral-400 mt-0.5">HTTP Roundtrip: {roundtripMs} ms</p>
+                  )}
                 </div>
               </div>
 
               {result.challenge && (
                 <div className="bg-warning-50 border border-warning-200 rounded-lg p-3 text-sm">
                   <p className="font-medium text-warning-700">Challenge: {result.challenge.type}</p>
-                  <p className="text-warning-600 text-xs">TTL: {result.challenge.ttl_seconds}s</p>
+                  <p className="text-warning-600 text-xs">TTL: {result.challenge.ttl_seconds}s (SMS yuborildi)</p>
                 </div>
               )}
 
@@ -251,13 +282,13 @@ export default function Simulator() {
               </div>
 
               <div>
-                <p className="text-xs font-medium text-neutral-500 mb-2">Rules Fired</p>
+                <p className="text-xs font-medium text-neutral-500 mb-2">Rules Fired (Active Only)</p>
                 <div className="flex flex-wrap gap-2">
                   {result.rules_fired.length > 0 ? result.rules_fired.map((r, i) => (
                     <span key={i} className="px-2.5 py-1 bg-primary-50 text-primary-700 text-xs rounded-lg font-mono">
                       {r.id} v{r.version}
                     </span>
-                  )) : <span className="text-neutral-400 text-xs">No rules fired</span>}
+                  )) : <span className="text-neutral-400 text-xs">No active rules fired</span>}
                 </div>
               </div>
             </div>

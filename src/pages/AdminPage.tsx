@@ -39,7 +39,29 @@ export default function AdminPage() {
       .update({ is_active: !u.is_active })
       .eq('id', u.id)
     if (!error) {
-      await logAudit(u.is_active ? 'user.deactivate' : 'user.activate', 'team_users', u.id)
+      await logAudit(u.is_active ? 'user.deactivate' : 'user.activate', 'team_users', u.id, {
+        email: u.email,
+        full_name: u.full_name,
+      })
+      fetchData()
+    }
+  }
+
+  const changeUserRole = async (u: TeamUser, newRole: UserRole) => {
+    if (u.id === user?.id) {
+      alert("O'z rolingizni o'zgartira olmaysiz")
+      return
+    }
+    const { error } = await supabase
+      .from('team_users')
+      .update({ role: newRole })
+      .eq('id', u.id)
+    if (!error) {
+      await logAudit('user.role_change', 'team_users', u.id, {
+        email: u.email,
+        old_role: u.role,
+        new_role: newRole,
+      })
       fetchData()
     }
   }
@@ -49,23 +71,31 @@ export default function AdminPage() {
       .from('webhooks')
       .update({ is_active: !wh.is_active })
       .eq('id', wh.id)
-    if (!error) fetchData()
+    if (!error) {
+      await logAudit(wh.is_active ? 'webhook.deactivate' : 'webhook.activate', 'webhook', wh.id, { url: wh.url })
+      fetchData()
+    }
   }
 
   const deleteWebhook = async (wh: WebhookType) => {
     if (!confirm(t('confirmDelete'))) return
     const { error } = await supabase.from('webhooks').delete().eq('id', wh.id)
-    if (!error) fetchData()
+    if (!error) {
+      await logAudit('webhook.delete', 'webhook', wh.id, { url: wh.url })
+      fetchData()
+    }
   }
 
   const createWebhook = async () => {
     if (!newWebhookUrl || !newWebhookTenant) return
-    const { error } = await supabase.from('webhooks').insert({
+    const { data, error } = await supabase.from('webhooks').insert({
       url: newWebhookUrl,
       tenant_id: newWebhookTenant,
       is_active: true,
-    })
+    }).select('id').maybeSingle()
+
     if (!error) {
+      await logAudit('webhook.create', 'webhook', data?.id || null, { url: newWebhookUrl, tenant_id: newWebhookTenant })
       setShowAddWebhook(false)
       setNewWebhookUrl('')
       setNewWebhookTenant('')
@@ -117,7 +147,21 @@ export default function AdminPage() {
                   <td className="px-4 py-3 font-medium text-neutral-900">{u.full_name}</td>
                   <td className="px-4 py-3 text-neutral-600">{u.email}</td>
                   <td className="px-4 py-3">
-                    <span className="badge bg-primary-50 text-primary-700">{t(u.role as any)}</span>
+                    {u.id === user?.id ? (
+                      <span className="badge bg-primary-50 text-primary-700">{t(u.role as any)}</span>
+                    ) : (
+                      <select
+                        value={u.role}
+                        onChange={e => changeUserRole(u, e.target.value as UserRole)}
+                        className="input py-1 px-2 text-xs font-medium max-w-[150px]"
+                      >
+                        <option value="admin">{t('admin')}</option>
+                        <option value="fraud_manager">{t('fraud_manager')}</option>
+                        <option value="analyst">{t('analyst')}</option>
+                        <option value="data_scientist">{t('data_scientist')}</option>
+                        <option value="auditor">{t('auditor')}</option>
+                      </select>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-neutral-600 uppercase">{u.language}</td>
                   <td className="px-4 py-3">

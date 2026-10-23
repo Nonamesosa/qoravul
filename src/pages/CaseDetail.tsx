@@ -74,19 +74,21 @@ export default function CaseDetail() {
     fetchCase()
   }, [fetchCase])
 
+  const isAuditor = user?.role === 'auditor'
+
   const assignToMe = async () => {
-    if (!caseData || !user) return
+    if (!caseData || !user || isAuditor) return
     const { error: err } = await supabase
       .from('cases')
       .update({ assignee_id: user.id, status: 'in_review', updated_at: new Date().toISOString() })
       .eq('id', caseData.id)
     if (err) { setError(err.message); return }
-    await logAudit('case.assign', 'case', caseData.id, { assignee: user.id })
+    await logAudit('case.assign', 'case', caseData.id, { assignee: user.id, assignee_name: user.full_name })
     fetchCase()
   }
 
   const closeCase = async () => {
-    if (!caseData || !user) return
+    if (!caseData || !user || isAuditor) return
     if (outcome === 'confirmed_fraud' && !note.trim()) {
       setError(t('noteRequired'))
       return
@@ -94,10 +96,14 @@ export default function CaseDetail() {
     setSubmitting(true)
     setError(null)
 
+    // BUG-10 fix: if case had no assignee, auto-assign to the user closing it
+    const finalAssigneeId = caseData.assignee_id || user.id
+
     const { error: err } = await supabase
       .from('cases')
       .update({
         status: 'closed',
+        assignee_id: finalAssigneeId,
         outcome,
         analyst_note: note,
         closed_at: new Date().toISOString(),
@@ -117,7 +123,12 @@ export default function CaseDetail() {
       })
     }
 
-    await logAudit('case.close', 'case', caseData.id, { outcome, note })
+    await logAudit('case.close', 'case', caseData.id, {
+      outcome,
+      note,
+      closed_by: user.id,
+      closed_by_name: user.full_name,
+    })
     setSubmitting(false)
     fetchCase()
   }
@@ -238,9 +249,28 @@ export default function CaseDetail() {
                 <span className="font-medium text-neutral-900">{caseData.priority}/100</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-neutral-500">Assignee</span>
+                <span className="text-neutral-500">{caseData.status === 'closed' ? t('closedBy') : 'Assignee'}</span>
                 <span className="font-medium text-neutral-900">{caseData.assignee?.full_name || '—'}</span>
               </div>
+              {caseData.status === 'closed' && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">{t('closedAt')}</span>
+                    <span className="font-medium text-neutral-900">{formatDate(caseData.closed_at || caseData.updated_at, lang)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">Outcome</span>
+                    <span className={clsx(
+                      'font-semibold text-xs px-2 py-0.5 rounded',
+                      caseData.outcome === 'confirmed_fraud' ? 'bg-danger-100 text-danger-700' :
+                      caseData.outcome === 'legitimate' ? 'bg-success-100 text-success-700' : 'bg-warning-100 text-warning-700'
+                    )}>
+                      {caseData.outcome === 'confirmed_fraud' ? t('confirmFraud') :
+                       caseData.outcome === 'legitimate' ? t('legitimate') : t('unsure')}
+                    </span>
+                  </div>
+                </>
+              )}
               <div className="flex justify-between">
                 <span className="text-neutral-500">{t('sla')}</span>
                 <span className={clsx('font-medium', breached ? 'text-danger-600' : 'text-neutral-900')}>
@@ -253,7 +283,14 @@ export default function CaseDetail() {
               </div>
             </div>
 
-            {caseData.status === 'open' && (
+            {/* Auditor notice */}
+            {isAuditor && (
+              <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-xs">
+                {t('auditorReadOnly')}
+              </div>
+            )}
+
+            {caseData.status === 'open' && !isAuditor && (
               <button onClick={assignToMe} className="btn-primary w-full mt-4">
                 <UserPlus className="w-4 h-4" />
                 {t('assignToMe')}
@@ -261,8 +298,16 @@ export default function CaseDetail() {
             )}
           </div>
 
-          {/* Close case form */}
-          {caseData.status !== 'closed' && (
+          {/* Closed case analyst note */}
+          {caseData.status === 'closed' && caseData.analyst_note && (
+            <div className="card p-5">
+              <h3 className="text-sm font-semibold text-neutral-700 mb-2">{t('analystNote')}</h3>
+              <p className="text-sm text-neutral-800 bg-neutral-50 p-3 rounded-lg">{caseData.analyst_note}</p>
+            </div>
+          )}
+
+          {/* Close case form (hidden for auditor and closed cases) */}
+          {caseData.status !== 'closed' && !isAuditor && (
             <div className="card p-5">
               <h3 className="text-sm font-semibold text-neutral-700 mb-4">{t('closeCase')}</h3>
               <div className="space-y-3">

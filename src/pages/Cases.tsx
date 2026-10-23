@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import { logAudit } from '../lib/audit'
 import { FolderOpen, Filter, UserPlus, AlertCircle } from 'lucide-react'
 import {
   getCaseStatusBadgeClass, getSlaRemaining, isSlaBreached,
@@ -48,7 +49,7 @@ export default function Cases() {
   }, [fetchCases])
 
   const assignToMe = async (caseId: string) => {
-    if (!user) return
+    if (!user || user.role === 'auditor') return
     const { error } = await supabase
       .from('cases')
       .update({
@@ -59,6 +60,7 @@ export default function Cases() {
       .eq('id', caseId)
 
     if (!error) {
+      await logAudit('case.assign', 'case', caseId, { assignee: user.id, assignee_name: user.full_name })
       fetchCases()
     }
   }
@@ -175,8 +177,8 @@ export default function Cases() {
                   </div>
                 )}
 
-                {/* Assign to me button */}
-                {c.status === 'open' && (
+                {/* Assign to me button (hidden for auditor) */}
+                {c.status === 'open' && user?.role !== 'auditor' && (
                   <button
                     onClick={(e) => {
                       e.preventDefault()

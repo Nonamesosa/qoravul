@@ -147,19 +147,8 @@ export default function AuthPage() {
 
               {mode === 'signup' && (
                 <>
-                  <div>
-                    <label className="label">{t('role')}</label>
-                    <select
-                      value={role}
-                      onChange={e => setRole(e.target.value as UserRole)}
-                      className="input"
-                    >
-                      <option value="admin">{t('admin')}</option>
-                      <option value="fraud_manager">{t('fraud_manager')}</option>
-                      <option value="analyst">{t('analyst')}</option>
-                      <option value="data_scientist">{t('data_scientist')}</option>
-                      <option value="auditor">{t('auditor')}</option>
-                    </select>
+                  <div className="bg-primary-50 border border-primary-200 rounded-lg p-3 text-xs text-primary-800">
+                    <p className="font-medium">{t('defaultRoleNotice')}</p>
                   </div>
                   <div>
                     <label className="label">{t('language')}</label>

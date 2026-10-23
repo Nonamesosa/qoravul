@@ -205,53 +205,78 @@ Deno.serve(async (req: Request) => {
     // Compute features
     const features = computeFeatures(body)
 
-    // Fetch active and shadow rules
-    const { data: rules } = await supabase
-      .from('rules')
-      .select('*')
-      .in('status', ['active', 'shadow'])
+    // Parallel fetch of approved rules (BUG-03) and champion model (BUG-04, BUG-06)
+    const [{ data: rules }, { data: champion }] = await Promise.all([
+      supabase
+        .from('rules')
+        .select('*')
+        .in('status', ['active', 'shadow'])
+        .not('approved_by', 'is', null),
+      supabase
+        .from('model_versions')
+        .select('version')
+        .eq('status', 'champion')
+        .maybeSingle(),
+    ])
 
-    // Evaluate rules
+    // Evaluate rules (BUG-12: separate active and shadow rules)
     const firedRules: { id: string; version: number }[] = []
+    const shadowRulesFired: { id: string; version: number; action: string; reason_code: string | null }[] = []
     const firedReasons: string[] = []
     let ruleDecision: 'ALLOW' | 'CHALLENGE' | 'BLOCK' | null = null
 
     for (const rule of (rules || []) as Rule[]) {
       if (evaluateRule(rule, features)) {
-        firedRules.push({ id: rule.id.slice(0, 8), version: rule.version })
-        if (rule.reason_code) firedReasons.push(rule.reason_code)
         if (rule.status === 'active') {
-          if (rule.action === 'BLOCK') { ruleDecision = 'BLOCK'; break }
-          if (rule.action === 'CHALLENGE' && ruleDecision !== 'BLOCK') ruleDecision = 'CHALLENGE'
+          // Live active rules affect decision, fired rules and reason codes
+          firedRules.push({ id: rule.id.slice(0, 8), version: rule.version })
+          if (rule.reason_code) firedReasons.push(rule.reason_code)
+          if (rule.action === 'BLOCK') {
+            ruleDecision = 'BLOCK'
+          } else if (rule.action === 'CHALLENGE' && ruleDecision !== 'BLOCK') {
+            ruleDecision = 'CHALLENGE'
+          }
+        } else if (rule.status === 'shadow') {
+          // FR-11: Shadow rules ONLY logged for analysis, NEVER affect decision, rules_fired or live reasons
+          shadowRulesFired.push({
+            id: rule.id.slice(0, 8),
+            version: rule.version,
+            action: rule.action,
+            reason_code: rule.reason_code,
+          })
         }
       }
     }
 
-    // ML inference (simulated)
-    const { data: champion } = await supabase
-      .from('model_versions')
-      .select('version')
-      .eq('status', 'champion')
-      .maybeSingle()
-
-    const modelVersion = champion?.version || 'lgbm-2026.10.1'
+    // ML inference (BUG-04: degraded flag if no champion)
+    const isDegraded = !champion
+    const modelVersion = champion?.version || 'none (rules-only fallback)'
     const mlScore = computeRiskScore(features)
 
-    // Final decision
-    let riskScore = mlScore
-    let decision: 'ALLOW' | 'CHALLENGE' | 'BLOCK'
-
-    if (ruleDecision) {
-      decision = ruleDecision
+    // Final decision calculation (BUG-11: strict score thresholds per TZ 7.1 & FR-02)
+    // 0-599: ALLOW, 600-799: CHALLENGE, 800-1000: BLOCK
+    let scoreDecision: 'ALLOW' | 'CHALLENGE' | 'BLOCK' = 'ALLOW'
+    if (mlScore >= 800) {
+      scoreDecision = 'BLOCK'
+    } else if (mlScore >= 600) {
+      scoreDecision = 'CHALLENGE'
     } else {
-      if (riskScore < 600) decision = 'ALLOW'
-      else if (riskScore < 800) decision = 'CHALLENGE'
-      else decision = 'BLOCK'
+      scoreDecision = 'ALLOW'
+    }
+
+    // Combined decision: most restrictive policy wins (BLOCK > CHALLENGE > ALLOW)
+    let decision: 'ALLOW' | 'CHALLENGE' | 'BLOCK'
+    if (ruleDecision === 'BLOCK' || scoreDecision === 'BLOCK') {
+      decision = 'BLOCK'
+    } else if (ruleDecision === 'CHALLENGE' || scoreDecision === 'CHALLENGE') {
+      decision = 'CHALLENGE'
+    } else {
+      decision = 'ALLOW'
     }
 
     const reasonCodes = firedReasons.length > 0
-      ? [...new Set([...firedReasons, ...getReasonCodes(features, riskScore)])].slice(0, 3)
-      : getReasonCodes(features, riskScore)
+      ? [...new Set([...firedReasons, ...getReasonCodes(features, mlScore)])].slice(0, 3)
+      : getReasonCodes(features, mlScore)
 
     const latencyMs = Math.round(performance.now() - startTime)
 
@@ -285,39 +310,63 @@ Deno.serve(async (req: Request) => {
       event_id: eventRow?.id,
       request_id: body.request_id,
       decision,
-      risk_score: riskScore,
+      risk_score: mlScore,
       model_version: modelVersion,
       rules_fired: firedRules,
       reason_codes: reasonCodes,
-      feature_snapshot: features,
-      degraded: false,
+      feature_snapshot: { ...features, shadow_rules_fired: shadowRulesFired },
+      degraded: isDegraded,
       latency_ms: latencyMs,
     }).select('id').maybeSingle()
 
-    // Create case for CHALLENGE or BLOCK
+    // Create case and send notifications for CHALLENGE or BLOCK (BUG-07)
     if (decision !== 'ALLOW' && decisionRow?.id && eventRow?.id) {
       const slaHours = decision === 'BLOCK' ? 0.5 : 4
       const slaDue = new Date()
       slaDue.setMinutes(slaDue.getMinutes() + slaHours * 60)
 
-      await supabase.from('cases').insert({
+      const { data: caseRow } = await supabase.from('cases').insert({
         decision_id: decisionRow.id,
         event_id: eventRow.id,
-        priority: Math.min(100, Math.round(riskScore / 10)),
+        priority: Math.min(100, Math.round(mlScore / 10)),
         status: 'open',
         sla_due_at: slaDue.toISOString(),
-      })
+      }).select('id').maybeSingle()
+
+      // Insert customer notification (BUG-07: FR-40 - FR-43)
+      if (decision === 'CHALLENGE') {
+        const otpCode = Math.floor(100000 + Math.random() * 900000)
+        await supabase.from('notifications').insert({
+          case_id: caseRow?.id || null,
+          decision_id: decisionRow.id,
+          channel: 'sms',
+          language: 'uz',
+          message: `Tasdiqlash kodi: ${otpCode}. Qorovul: shubhali o'tkazma (${body.transaction?.amount || 0} UZS) aniqlandi. Amal qilish muddati: 120 soniya.`,
+          status: 'delivered',
+          sent_at: new Date().toISOString(),
+        })
+      } else if (decision === 'BLOCK') {
+        await supabase.from('notifications').insert({
+          case_id: caseRow?.id || null,
+          decision_id: decisionRow.id,
+          channel: 'push',
+          language: 'uz',
+          message: `Xavfsizlik ogohlantirishi: Shubhali operatsiya (${body.transaction?.amount || 0} UZS) bloklandi. Sabab: ${reasonCodes.join(', ')}.`,
+          status: 'delivered',
+          sent_at: new Date().toISOString(),
+        })
+      }
     }
 
     const response = {
       request_id: body.request_id,
       decision,
-      risk_score: riskScore,
+      risk_score: mlScore,
       reason_codes: reasonCodes,
       challenge: decision === 'CHALLENGE' ? { type: 'otp_sms', ttl_seconds: 120 } : undefined,
       model_version: modelVersion,
       rules_fired: firedRules,
-      degraded: false,
+      degraded: isDegraded,
       latency_ms: latencyMs,
     }
 
