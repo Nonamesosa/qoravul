@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { logAudit } from '../lib/audit'
-import { FolderOpen, Filter, UserPlus, AlertCircle } from 'lucide-react'
+import { FolderOpen, Filter, UserPlus, AlertCircle, ShieldAlert } from 'lucide-react'
 import {
   getCaseStatusBadgeClass, getSlaRemaining, isSlaBreached,
   formatTimeAgo, formatCurrency,
@@ -80,6 +80,17 @@ export default function Cases() {
           <p className="text-neutral-500 text-sm mt-0.5">{t('caseQueue')}</p>
         </div>
       </div>
+
+      {/* Auditor read-only notice */}
+      {user?.role === 'auditor' && (
+        <div className="card p-4 bg-amber-50 border border-amber-200 text-amber-900 flex items-center gap-3">
+          <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />
+          <div className="text-xs">
+            <span className="font-bold">Auditor rejimi:</span> {t('auditorReadOnly')}. Keyslarni biriktirish ("Meni tayinlash") va yopish operatsion amallar hisoblanadi. Auditor keyslar navbati va ularning qarorlarini faqat ko'rib chiqishi mumkin.
+          </div>
+        </div>
+      )}
+
 
       {/* Filter tabs */}
       <div className="flex gap-2">

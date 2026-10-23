@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import { Plus, CheckCircle, Eye, EyeOff, Trash2, Filter, ArrowRight, ShieldCheck } from 'lucide-react'
+import { Plus, CheckCircle, Eye, EyeOff, Trash2, Filter, ArrowRight, ShieldCheck, ShieldAlert } from 'lucide-react'
 import { logAudit } from '../lib/audit'
 import { getRuleStatusBadgeClass, formatDate } from '../lib/utils'
 import type { Rule, TeamUser } from '../types'
@@ -15,7 +15,9 @@ export default function Rules() {
   const [rules, setRules] = useState<(Rule & { created_by_user?: TeamUser; approved_by_user?: TeamUser })[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<FilterStatus>('all')
-  const canManage = user?.role === 'admin' || user?.role === 'fraud_manager'
+
+  const isAuditor = user?.role === 'auditor'
+  const canManage = (user?.role === 'admin' || user?.role === 'fraud_manager') && !isAuditor
 
   const fetchRules = useCallback(async () => {
     setLoading(true)
@@ -30,8 +32,9 @@ export default function Rules() {
 
   const approve = async (rule: Rule) => {
     if (!user || !canManage) return
-    if (rule.created_by && rule.created_by === user.id && user.role !== 'admin') {
-      alert(t('cannotApproveOwn'))
+    // Strict 4-eyes enforcement: creator CANNOT approve own rule (FR-13)
+    if (rule.created_by && rule.created_by === user.id) {
+      alert("4-eyes tamoyili (FR-13): Qoida yaratuvchisi o'z qoidasini tasdiqlay olmaydi. Tasdiqlash uchun boshqa Administrator yoki Fraud menejer talab qilinadi.")
       return
     }
     const { error } = await supabase
@@ -50,8 +53,12 @@ export default function Rules() {
 
   const approveAllUnapproved = async () => {
     if (!user || !canManage) return
-    const unapproved = rules.filter(r => !r.approved_by && (r.created_by !== user.id || user.role === 'admin'))
-    if (unapproved.length === 0) return
+    // 4-eyes: only approve rules created by OTHER users
+    const unapproved = rules.filter(r => !r.approved_by && r.created_by !== user.id)
+    if (unapproved.length === 0) {
+      alert("Tasdiqlash uchun boshqa xodimlar tomonidan yaratilgan qoidalar mavjud emas. 4-eyes tamoyiliga ko'ra o'z qoidalaringizni o'zingiz tasdiqlay olmaysiz.")
+      return
+    }
 
     for (const r of unapproved) {
       await supabase
@@ -134,11 +141,11 @@ export default function Rules() {
         </div>
         {canManage && (
           <div className="flex items-center gap-2">
-            {rules.some(r => !r.approved_by) && (
+            {rules.some(r => !r.approved_by && r.created_by !== user?.id) && (
               <button
                 onClick={approveAllUnapproved}
                 className="btn-secondary text-success-700 hover:bg-success-50 border-success-200"
-                title="Barcha tasdiqlanmagan qoidalarni 4-eyes tamoyili asosida tasdiqlash"
+                title="Boshqa foydalanuvchilar qoidalarini 4-eyes tamoyili asosida tasdiqlash"
               >
                 <ShieldCheck className="w-4 h-4 text-success-600" />
                 4-Eyes Tasdiqlash
@@ -151,6 +158,16 @@ export default function Rules() {
           </div>
         )}
       </div>
+
+      {/* Auditor read-only notice */}
+      {isAuditor && (
+        <div className="card p-4 bg-amber-50 border border-amber-200 text-amber-900 flex items-center gap-3">
+          <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />
+          <div className="text-xs">
+            <span className="font-bold">Auditor rejimi:</span> {t('auditorReadOnly')}. Qoidalarni boshqarish operatsion huquq hisoblanadi. Auditor barcha qoidalar ro'yxatini va ularning shartlarini "Ko'rib chiqish" orqali tekshirishi mumkin.
+          </div>
+        </div>
+      )}
 
       <div className="flex gap-2">
         {filters.map(f => (
@@ -169,14 +186,13 @@ export default function Rules() {
           <div className="w-8 h-8 border-2 border-primary-200 border-t-primary-600 rounded-full animate-spin" />
         </div>
       ) : rules.length === 0 ? (
-        <div className="card p-12 text-center">
-          <Filter className="w-12 h-12 text-neutral-300 mx-auto mb-3" />
-          <p className="text-neutral-400">{t('noData')}</p>
+        <div className="card p-12 text-center text-neutral-400">
+          {t('noData')}
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {rules.map(rule => (
-            <div key={rule.id} className="card p-4 hover:shadow-md transition-all">
+            <div key={rule.id} className="card p-5">
               <div className="flex items-start gap-4">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
@@ -202,56 +218,58 @@ export default function Rules() {
                 </div>
 
                 {/* Actions */}
-                {canManage && (
-                  <div className="flex items-center gap-1.5">
-                    {/* Approve button for any unapproved rule */}
-                    {!rule.approved_by && (
-                      <button
-                        onClick={() => approve(rule)}
-                        disabled={rule.created_by === user?.id && user?.role !== 'admin'}
-                        className={clsx(
-                          'btn-sm btn-success',
-                          rule.created_by === user?.id && user?.role !== 'admin' && 'opacity-50 cursor-not-allowed'
-                        )}
-                        title={rule.created_by === user?.id && user?.role !== 'admin' ? t('cannotApproveOwn') : t('approve')}
-                      >
-                        <CheckCircle className="w-3.5 h-3.5" />
-                        {t('approve')}
-                      </button>
-                    )}
-                    {rule.approved_by && rule.status === 'draft' && (
-                      <button onClick={() => moveToShadow(rule)} className="btn-sm btn-secondary" title={t('shadowMode')}>
-                        <Eye className="w-3.5 h-3.5" />
-                        {t('shadow')}
-                      </button>
-                    )}
-                    {rule.approved_by && (rule.status === 'shadow' || rule.status === 'disabled') && (
-                      <button onClick={() => activate(rule)} className="btn-sm btn-primary" title={t('activate')}>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                        {t('activate')}
-                      </button>
-                    )}
-                    {rule.status === 'active' && (
-                      <button onClick={() => disable(rule)} className="btn-sm btn-secondary" title={t('deactivate')}>
-                        <EyeOff className="w-3.5 h-3.5" />
-                        {t('deactivate')}
-                      </button>
-                    )}
-                    {rule.status === 'shadow' && (
-                      <button onClick={() => disable(rule)} className="btn-sm btn-secondary" title={t('deactivate')}>
-                        <EyeOff className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                    {user?.role === 'admin' && (
-                      <button onClick={() => remove(rule)} className="btn-sm btn-danger" title={t('deleteRule')}>
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                    <Link to={`/rules/${rule.id}/edit`} className="btn-sm btn-secondary">
-                      {t('review')}
-                    </Link>
-                  </div>
-                )}
+                <div className="flex items-center gap-1.5">
+                  {canManage && (
+                    <>
+                      {/* Approve button for any unapproved rule (strict 4-eyes: disabled if created_by === user.id) */}
+                      {!rule.approved_by && (
+                        <button
+                          onClick={() => approve(rule)}
+                          disabled={Boolean(rule.created_by && rule.created_by === user?.id)}
+                          className={clsx(
+                            'btn-sm btn-success',
+                            rule.created_by && rule.created_by === user?.id && 'opacity-50 cursor-not-allowed'
+                          )}
+                          title={rule.created_by && rule.created_by === user?.id ? "4-eyes: O'zingiz yaratgan qoidani tasdiqlay olmaysiz" : t('approve')}
+                        >
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          {t('approve')}
+                        </button>
+                      )}
+                      {rule.approved_by && rule.status === 'draft' && (
+                        <button onClick={() => moveToShadow(rule)} className="btn-sm btn-secondary" title={t('shadowMode')}>
+                          <Eye className="w-3.5 h-3.5" />
+                          {t('shadow')}
+                        </button>
+                      )}
+                      {rule.approved_by && (rule.status === 'shadow' || rule.status === 'disabled') && (
+                        <button onClick={() => activate(rule)} className="btn-sm btn-primary" title={t('activate')}>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                          {t('activate')}
+                        </button>
+                      )}
+                      {rule.status === 'active' && (
+                        <button onClick={() => disable(rule)} className="btn-sm btn-secondary" title={t('deactivate')}>
+                          <EyeOff className="w-3.5 h-3.5" />
+                          {t('deactivate')}
+                        </button>
+                      )}
+                      {rule.status === 'shadow' && (
+                        <button onClick={() => disable(rule)} className="btn-sm btn-secondary" title={t('deactivate')}>
+                          <EyeOff className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      {user?.role === 'admin' && (
+                        <button onClick={() => remove(rule)} className="btn-sm btn-danger" title={t('deleteRule')}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </>
+                  )}
+                  <Link to={`/rules/${rule.id}/edit`} className="btn-sm btn-secondary">
+                    {t('review')}
+                  </Link>
+                </div>
               </div>
             </div>
           ))}

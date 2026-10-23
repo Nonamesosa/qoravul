@@ -222,6 +222,8 @@ export interface ScoringResponse {
   }
   model_version: string
   rules_fired: RuleFired[]
+  shadow_rules_fired?: { id: string; version: number; action: string; reason_code: string | null }[]
   degraded: boolean
   latency_ms: number
 }
+

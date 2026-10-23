@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { logAudit } from '../lib/audit'
-import { ArrowLeft, Plus, Trash2, Save, CheckCircle, Eye, EyeOff, Zap, AlertTriangle, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, Save, CheckCircle, Eye, EyeOff, Zap, AlertTriangle, ShieldCheck, ShieldAlert } from 'lucide-react'
 import { getRuleStatusBadgeClass, formatDate } from '../lib/utils'
 import type { RuleCondition, DecisionType, Rule, TeamUser } from '../types'
 import clsx from 'clsx'
@@ -51,7 +51,15 @@ export default function RuleEditor() {
   const [error, setError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
 
-  const canManage = user?.role === 'admin' || user?.role === 'fraud_manager'
+  const isAuditor = user?.role === 'auditor'
+  const canManage = (user?.role === 'admin' || user?.role === 'fraud_manager') && !isAuditor
+
+  // If auditor attempts to create new rule, redirect to rules list
+  useEffect(() => {
+    if (!id && isAuditor) {
+      navigate('/rules', { replace: true })
+    }
+  }, [id, isAuditor, navigate])
 
   const fetchRule = useCallback(async () => {
     if (!id) return
@@ -77,28 +85,31 @@ export default function RuleEditor() {
   }, [fetchRule])
 
   const addCondition = () => {
+    if (isAuditor) return
     setConditions([...conditions, { feature: FEATURES[0], op: 'eq', value: '' }])
   }
 
   const updateCondition = (i: number, field: keyof RuleCondition, val: unknown) => {
+    if (isAuditor) return
     const updated = [...conditions]
     ;(updated[i] as any)[field] = val
     setConditions(updated)
   }
 
   const removeCondition = (i: number) => {
+    if (isAuditor) return
     setConditions(conditions.filter((_, idx) => idx !== i))
   }
 
-  // 4-eyes approval action (FR-13)
+  // 4-eyes approval action (FR-13): strict check without ANY exception
   const approveRule = async () => {
     if (!rule || !user || !canManage) return
     setError(null)
     setSuccessMsg(null)
 
-    // 4-eyes enforcement: creator cannot approve own rule (FR-13)
-    if (rule.created_by && rule.created_by === user.id && user.role !== 'admin') {
-      setError(t('cannotApproveOwn'))
+    // Strict 4-eyes enforcement: creator CANNOT approve own rule under any circumstances
+    if (rule.created_by && rule.created_by === user.id) {
+      setError("4-eyes tamoyili (FR-13): Qoida yaratuvchisi o'z qoidasini tasdiqlay olmaydi. Tasdiqlash uchun boshqa Administrator yoki Fraud menejer talab qilinadi.")
       return
     }
 
@@ -181,6 +192,7 @@ export default function RuleEditor() {
   }
 
   const save = async () => {
+    if (isAuditor) return
     if (!name || conditions.length === 0 || !user) return
     setSaving(true)
     setError(null)
@@ -190,14 +202,16 @@ export default function RuleEditor() {
       conditions: logic === 'all' ? { all: conditions } : { any: conditions },
     }
 
-    if (id) {
+    if (id && rule) {
+      // Editing existing rule
       const { error: err } = await supabase
         .from('rules')
         .update({
           name,
-          action,
-          reason_code: reasonCode,
           definition,
+          action,
+          reason_code: reasonCode || null,
+          version: rule.version + 1,
           updated_at: new Date().toISOString(),
         })
         .eq('id', id)
@@ -205,36 +219,47 @@ export default function RuleEditor() {
       if (err) {
         setError(err.message)
       } else {
-        await logAudit('rule.update', 'rule', id, { name, action, reasonCode })
+        await logAudit('rule.update', 'rule', id, {
+          rule_name: name,
+          version: rule.version + 1,
+        })
+        setSuccessMsg(t('save'))
         fetchRule()
-        setSuccessMsg(t('success'))
       }
     } else {
+      // Creating new rule -> starts as 'draft', approved_by is null
       const { data, error: err } = await supabase
         .from('rules')
         .insert({
           name,
-          action,
-          reason_code: reasonCode,
           definition,
+          action,
+          reason_code: reasonCode || null,
           status: 'draft',
           version: 1,
+          owner: 'fraud_team',
           created_by: user.id,
+          approved_by: null,
+          approved_at: null,
         })
-        .select('id')
-        .maybeSingle()
+        .select()
+        .single()
 
       if (err) {
         setError(err.message)
       } else if (data) {
-        await logAudit('rule.create', 'rule', data.id, { name, action })
-        navigate('/rules')
+        await logAudit('rule.create', 'rule', data.id, {
+          rule_name: name,
+          status: 'draft',
+        })
+        navigate(`/rules/${data.id}/edit`)
       }
     }
     setSaving(false)
   }
 
-  const isOwnRule = rule?.created_by === user?.id
+  // 4-eyes: check if current logged-in user is the creator of this rule
+  const isOwnRule = Boolean(rule && user && rule.created_by && rule.created_by === user.id)
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -265,6 +290,16 @@ export default function RuleEditor() {
         )}
       </div>
 
+      {/* Auditor read-only notice */}
+      {isAuditor && (
+        <div className="card p-4 bg-amber-50 border border-amber-200 text-amber-900 flex items-center gap-3">
+          <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />
+          <div className="text-xs">
+            <span className="font-bold">Auditor rejimi:</span> {t('auditorReadOnly')}. Qoidalarni yaratish yoki o'zgartirish operatsion huquq hisoblanadi. Siz qoida konfiguratsiyasi va shartlarini faqat ko'rib chiqishingiz mumkin.
+          </div>
+        </div>
+      )}
+
       {/* 4-Eyes Approval & Status Control Banner (FR-13, BUG-02) */}
       {rule && canManage && (
         <div className="card p-5 bg-gradient-to-r from-neutral-50 to-primary-50/20 border border-neutral-200 space-y-3">
@@ -275,19 +310,22 @@ export default function RuleEditor() {
                 <h3 className="text-sm font-bold text-neutral-900">4-Eyes Tasdiqlash & Boshqaruv (FR-13)</h3>
               </div>
               <p className="text-xs text-neutral-500 mt-1">
-                Yaratilgan sana: {formatDate(rule.created_at, lang)}
+                Yaratilgan: {formatDate(rule.created_at, lang)}
                 {rule.approved_at && ` · Tasdiqlangan: ${formatDate(rule.approved_at, lang)}`}
               </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              {/* Approve button for unapproved rules */}
+              {/* Approve button for unapproved rules (strict 4-eyes: disabled if isOwnRule) */}
               {!rule.approved_by && (
                 <button
                   onClick={approveRule}
-                  disabled={actionLoading || (isOwnRule && user?.role !== 'admin')}
-                  className={clsx('btn-sm btn-success', isOwnRule && user?.role !== 'admin' && 'opacity-60 cursor-not-allowed')}
-                  title={isOwnRule && user?.role !== 'admin' ? t('cannotApproveOwn') : t('approve')}
+                  disabled={actionLoading || isOwnRule}
+                  className={clsx(
+                    'btn-sm btn-success',
+                    isOwnRule && 'opacity-50 cursor-not-allowed'
+                  )}
+                  title={isOwnRule ? "4-eyes: O'zingiz yaratgan qoidani tasdiqlay olmaysiz" : t('approve')}
                 >
                   <CheckCircle className="w-4 h-4" />
                   {t('approve')}
@@ -342,17 +380,19 @@ export default function RuleEditor() {
             </div>
           </div>
 
-          {/* 4-Eyes principle warning if current user is rule creator */}
-          {isOwnRule && !rule.approved_by && user?.role !== 'admin' && (
-            <div className="bg-warning-50 border border-warning-200 text-warning-800 p-2.5 rounded-lg text-xs flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0 text-warning-600" />
-              <span>{t('fourEyesRequirement')}</span>
+          {/* 4-Eyes principle strict warning if current user created this rule */}
+          {isOwnRule && !rule.approved_by && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-900 p-3 rounded-lg text-xs flex items-center gap-2.5">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
+              <span>
+                <strong>4-Eyes tamoyili (FR-13):</strong> Siz ushbu qoidaning muallifisiz. Qoidani o'zingiz tasdiqlay olmaysiz (creator ≠ approver). Tasdiqlash uchun tizimdagi boshqa Administrator yoki Fraud menejer hisobidan kirilishi kerak.
+              </span>
             </div>
           )}
 
-          {!rule.approved_by && (
+          {!rule.approved_by && !isOwnRule && (
             <div className="text-xs text-neutral-500 bg-white/60 rounded px-2.5 py-1.5 border border-neutral-100">
-              <span className="font-semibold text-danger-600">Eslatma:</span> Tasdiqlanmagan qoidalar jonli tranzaksiyalarni baholashda (Scoring Engine) ishga tushmaydi.
+              <span className="font-semibold text-danger-600">Eslatma:</span> Tasdiqlanmagan qoidalar jonli scoring dvigatelida ishga tushmaydi. Boshqa mas'ul shaxs sifatida tasdiqlash uchun "Tasdiqlash" tugmasini bosing.
             </div>
           )}
         </div>
@@ -361,13 +401,24 @@ export default function RuleEditor() {
       <div className="card p-6 space-y-5">
         <div>
           <label className="label">{t('ruleName')}</label>
-          <input value={name} onChange={e => setName(e.target.value)} className="input" placeholder="Rule name" />
+          <input
+            value={name}
+            onChange={e => setName(e.target.value)}
+            className="input"
+            placeholder="Rule name"
+            disabled={isAuditor}
+          />
         </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="label">{t('ruleAction')}</label>
-            <select value={action} onChange={e => setAction(e.target.value as DecisionType)} className="input">
+            <select
+              value={action}
+              onChange={e => setAction(e.target.value as DecisionType)}
+              className="input"
+              disabled={isAuditor}
+            >
               <option value="ALLOW">ALLOW</option>
               <option value="CHALLENGE">CHALLENGE</option>
               <option value="BLOCK">BLOCK</option>
@@ -375,7 +426,13 @@ export default function RuleEditor() {
           </div>
           <div>
             <label className="label">{t('reasonCode')}</label>
-            <input value={reasonCode} onChange={e => setReasonCode(e.target.value)} className="input" placeholder="NEW_DEVICE_NIGHT_TRANSFER" />
+            <input
+              value={reasonCode}
+              onChange={e => setReasonCode(e.target.value)}
+              className="input"
+              placeholder="NEW_DEVICE_NIGHT_TRANSFER"
+              disabled={isAuditor}
+            />
           </div>
         </div>
 
@@ -386,6 +443,7 @@ export default function RuleEditor() {
               <button
                 type="button"
                 onClick={() => setLogic('all')}
+                disabled={isAuditor}
                 className={`btn-sm ${logic === 'all' ? 'btn-primary' : 'btn-secondary'}`}
               >
                 ALL (AND)
@@ -393,6 +451,7 @@ export default function RuleEditor() {
               <button
                 type="button"
                 onClick={() => setLogic('any')}
+                disabled={isAuditor}
                 className={`btn-sm ${logic === 'any' ? 'btn-primary' : 'btn-secondary'}`}
               >
                 ANY (OR)
@@ -407,6 +466,7 @@ export default function RuleEditor() {
                   value={cond.feature}
                   onChange={e => updateCondition(i, 'feature', e.target.value)}
                   className="input flex-1 text-xs"
+                  disabled={isAuditor}
                 >
                   {FEATURES.map(f => <option key={f} value={f}>{f}</option>)}
                 </select>
@@ -414,6 +474,7 @@ export default function RuleEditor() {
                   value={cond.op}
                   onChange={e => updateCondition(i, 'op', e.target.value)}
                   className="input w-20 text-xs"
+                  disabled={isAuditor}
                 >
                   {OPERATORS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
@@ -425,18 +486,23 @@ export default function RuleEditor() {
                   }}
                   className="input w-32 text-xs"
                   placeholder="value"
+                  disabled={isAuditor}
                 />
-                <button type="button" onClick={() => removeCondition(i)} className="text-danger-500 hover:text-danger-700 p-1">
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                {!isAuditor && (
+                  <button type="button" onClick={() => removeCondition(i)} className="text-danger-500 hover:text-danger-700 p-1">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             ))}
           </div>
 
-          <button type="button" onClick={addCondition} className="btn-sm btn-secondary mt-2">
-            <Plus className="w-3.5 h-3.5" />
-            {t('addCondition')}
-          </button>
+          {!isAuditor && (
+            <button type="button" onClick={addCondition} className="btn-sm btn-secondary mt-2">
+              <Plus className="w-3.5 h-3.5" />
+              {t('addCondition')}
+            </button>
+          )}
         </div>
 
         {error && (
@@ -452,12 +518,14 @@ export default function RuleEditor() {
         )}
 
         <div className="flex gap-3 pt-2">
-          <button onClick={save} disabled={saving || !name} className="btn-primary">
-            <Save className="w-4 h-4" />
-            {id ? t('save') : t('saveDraft')}
-          </button>
+          {!isAuditor && (
+            <button onClick={save} disabled={saving || !name} className="btn-primary">
+              <Save className="w-4 h-4" />
+              {id ? t('save') : t('saveDraft')}
+            </button>
+          )}
           <button onClick={() => navigate('/rules')} className="btn-secondary">
-            {t('cancel')}
+            {isAuditor ? t('back') : t('cancel')}
           </button>
         </div>
       </div>
